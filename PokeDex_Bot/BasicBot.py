@@ -314,7 +314,7 @@ async def show_commands(ctx):
     embed = discord.Embed(
         title="PokéDex Bot Commands",
         description="Here are all available commands:",
-        color=TYPE_COLORS.get(types.split(", ")[0].lower(), 0xff0000)
+        color=0x00ff00
     )
     
     commands_list = [
@@ -323,6 +323,8 @@ async def show_commands(ctx):
         ("!moveset <pokemon>", "Get the list of moves a Pokémon can learn"),
         ("!stats <pokemon>", "Get detailed stats for a Pokémon"),
         ("!compare <pokemon1> <pokemon2>", "Compare two Pokémon's stats"),
+        ("!weakness <pokemon>", "Get type effectiveness for a Pokémon"),
+        ("!strategy <pokemon>", "Get battle strategy suggestions"),
         ("!commands", "Show this help message")
     ]
     
@@ -504,6 +506,104 @@ commands_list = [
     ("!commands", "Show this help message")
 ]
 
+
+@commands.cooldown(1, 5, commands.BucketType.user)
+@bot.command(name="strategy", help="Get battle strategy for a Pokémon")
+async def strategy(ctx, pokemon: str):
+    """Get competitive battle strategy for a Pokémon"""
+    async with ctx.typing():
+        pokemon_data = await PokemonAPI.get_pokemon_data(pokemon)
+        stats = await get_pokemon_stats(pokemon)
+        
+        if stats is None or pokemon_data is None:
+            await ctx.send(f"Sorry, couldn't find information for '{pokemon}'")
+            return
+        
+        name, types_str, stats_dict, sprite = stats
+        
+        # Get abilities
+        abilities = []
+        for ability in pokemon_data["abilities"]:
+            ability_name = ability["ability"]["name"].replace("-", " ").title()
+            is_hidden = ability["is_hidden"]
+            abilities.append({"name": ability_name, "hidden": is_hidden})
+        
+        # Create strategy embed with type color
+        primary_type = types_str.split(", ")[0].lower()
+        embed = discord.Embed(
+            title=f"{name}'s Battle Strategy Guide",
+            description=f"Type: {types_str}",
+            color=TYPE_COLORS.get(primary_type, 0xff0000)
+        )
+        
+        # Add abilities section
+        ability_text = "\n".join([
+            f"**{ability['name']}**" + (" (Hidden)" if ability['hidden'] else "")
+            for ability in abilities
+        ])
+        embed.add_field(
+            name="📋 Abilities",
+            value=ability_text,
+            inline=False
+        )
+        
+        # Determine role based on stats
+        highest_stat = max(stats_dict.items(), key=lambda x: x[1])
+        role_suggestions = {
+            "hp": "Tank/Wall",
+            "attack": "Physical Attacker",
+            "defense": "Physical Wall",
+            "special-attack": "Special Attacker",
+            "special-defense": "Special Wall",
+            "speed": "Fast Sweeper"
+        }
+        
+        role = role_suggestions.get(highest_stat[0], "Balanced")
+        
+        # Add suggested role
+        embed.add_field(
+            name="🎯 Suggested Role",
+            value=f"{role} (Highest stat: {highest_stat[0].replace('-', ' ').title()} = {highest_stat[1]})",
+            inline=False
+        )
+        
+        # Calculate and add weaknesses
+        weaknesses = set()
+        types = [t.strip().lower() for t in types_str.split(",")]
+        for poke_type in types:
+            weaknesses.update(TYPE_CHART[poke_type]["weak"])
+        
+        if weaknesses:
+            embed.add_field(
+                name="⚠️ Watch Out For",
+                value=", ".join(t.capitalize() for t in sorted(weaknesses)),
+                inline=False
+            )
+        
+        # Add strategy tips based on role and type
+        strategy_tips = [
+            f"• Focus on utilizing your high {highest_stat[0].replace('-', ' ')}",
+            f"• Consider moves that complement your {role} role",
+            "• Watch out for super-effective moves",
+            f"• Use abilities to your advantage: {', '.join(a['name'] for a in abilities)}"
+        ]
+        
+        if role in ["Physical Attacker", "Special Attacker"]:
+            strategy_tips.append("• Focus on offensive moves with high power")
+        elif role in ["Tank/Wall", "Physical Wall", "Special Wall"]:
+            strategy_tips.append("• Consider recovery moves and status conditions")
+        elif role == "Fast Sweeper":
+            strategy_tips.append("• Use your speed advantage to strike first")
+        
+        embed.add_field(
+            name="💡 Strategy Tips",
+            value="\n".join(strategy_tips),
+            inline=False
+        )
+        
+        embed.set_thumbnail(url=sprite)
+        await ctx.send(embed=embed)
+
 @compare.error
 async def compare_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
@@ -524,8 +624,27 @@ async def weakness_error(ctx, error):
         logger.error(f"Error in weakness command: {error}")
         await ctx.send(f"An error occurred: {str(error)}")
 
-# Cleanup
+@strategy.error
+async def strategy_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("Please specify a Pokémon! Example: `!strategy charizard`")
+    elif isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"This command is on cooldown. Try again in {error.retry_after:.1f}s")
+    else:
+        logger.error(f"Error in strategy command: {error}")
+        await ctx.send(f"An error occurred: {str(error)}")
 
+# Update commands list
+commands_list = [
+    ("!pokedex <pokemon>", "Get detailed information about a Pokémon"),
+    ("!evolve <pokemon>", "Get the evolution chain for a Pokémon"),
+    ("!moveset <pokemon>", "Get the list of moves a Pokémon can learn"),
+    ("!stats <pokemon>", "Get detailed stats for a Pokémon"),
+    ("!weakness <pokemon>", "Get type effectiveness for a Pokémon"),
+    ("!strategy <pokemon>", "Get battle strategy suggestions"),
+    ("!compare <pokemon1> <pokemon2>", "Compare two Pokémon's stats"),
+    ("!commands", "Show this help message")
+]
 
 # Start the bot
 bot.run(TOKEN)
