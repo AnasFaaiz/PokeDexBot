@@ -7,6 +7,7 @@ import logging
 import traceback
 from typing import Optional, List, Dict, Tuple
 
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('pokemon_bot')
@@ -66,6 +67,27 @@ TYPE_CHART = {
     "dark": {"weak": ["fighting", "bug", "fairy"], "immune": ["psychic"], "resistant": ["ghost", "dark"]},
     "steel": {"weak": ["fire", "fighting", "ground"], "immune": ["poison"], "resistant": ["normal", "grass", "ice", "flying", "psychic", "bug", "rock", "dragon", "steel", "fairy"]},
     "fairy": {"weak": ["poison", "steel"], "immune": ["dragon"], "resistant": ["fighting", "bug", "dark"]}
+}
+
+TYPE_EMOJIS = {
+    "normal": "⚪",
+    "fire": "🔥",
+    "water": "💧",
+    "electric": "⚡",
+    "grass": "🌿",
+    "ice": "❄️",
+    "fighting": "👊",
+    "poison": "☠️",
+    "ground": "🌍",
+    "flying": "🦅",
+    "psychic": "🧠",
+    "bug": "🪲",
+    "rock": "🪨",
+    "ghost": "👻",
+    "dragon": "🐉",
+    "dark": "🌑",
+    "steel": "⚔️",
+    "fairy": "🎀"
 }
 
 class PokemonAPI:
@@ -214,12 +236,16 @@ async def on_command_error(ctx, error):
 async def on_shutdown():
     await PokemonAPI.close_session()
 
+# PokeDex Command
 @commands.cooldown(1, 5, commands.BucketType.user)
 @bot.command(name="pokedex", help="Get information about a Pokémon")
 async def pokedex(ctx, pokemon: str):
+    """Get detailed information including Pokédex entry about a Pokémon"""
     async with ctx.typing():
         stats = await get_pokemon_stats(pokemon)
-        if stats is None:
+        species_data = await PokemonAPI.get_pokemon_species(pokemon)
+        
+        if stats is None or species_data is None:
             await ctx.send(f"Sorry, couldn't find information for '{pokemon}'")
             return
         
@@ -227,22 +253,81 @@ async def pokedex(ctx, pokemon: str):
         type_list = types.split(", ")
         primary_type = type_list[0].lower()
 
+        # Get English Pokédex entries
+        dex_entries = species_data["flavor_text_entries"]
+        english_entries = [entry for entry in dex_entries if entry["language"]["name"] == "en"]
+        dex_entry = english_entries[-1]["flavor_text"].replace("\f", " ").replace("\n", " ") if english_entries else "No Pokédex entry available."
+
+        # Get additional species information
+        generation = species_data.get("generation", {}).get("name", "").replace("-", " ").title()
+        genus = next((g["genus"] for g in species_data.get("genera", []) if g["language"]["name"] == "en"), "")
+        habitat = species_data.get("habitat", {}).get("name", "Unknown").capitalize()
+        is_legendary = species_data.get("is_legendary", False)
+        is_mythical = species_data.get("is_mythical", False)
+
         embed = discord.Embed(
-           title=name,
-            description=f"**Types**\n{types}",
+            title=f"{name} {'⭐' if is_legendary else '✨' if is_mythical else ''}",
             color=TYPE_COLORS.get(primary_type, 0xff0000)
         )
         
+        embed.add_field(
+            name="Types",
+            value="/".join([f"{TYPE_EMOJIS.get(t.lower(), '')} {t}" for t in type_list]),
+            inline=False
+        )
+
+        embed.add_field(
+            name="Classification",
+            value=f"**{genus}**\n{generation}\nHabitat: {habitat}",
+            inline=False
+        )
+
+        embed.add_field(
+            name="📖 Pokédex Entry",
+            value=dex_entry,
+            inline=False
+        )
+        
+        stat_emojis = {
+            "hp": "❤️",
+            "attack": "⚔️",
+            "defense": "🛡️",
+            "special-attack": "🔮",
+            "special-defense": "🔰",
+            "speed": "⚡"
+        }
+        
+        stats_text = []
+        max_stat = 255
         for stat_name, value in stats_dict.items():
-            embed.add_field(
-                name=stat_name.replace("-", " ").title(),
-                value=value,
-                inline=True
+            bars = "█" * int((value / max_stat) * 10)
+            spaces = "░" * (10 - len(bars))
+            stats_text.append(
+                f"{stat_emojis.get(stat_name, '📊')} **{stat_name.replace('-', ' ').title()}**\n"
+                f"`{bars}{spaces}` {value}\n"
             )
+        
+        embed.add_field(
+            name="\nBase Stats",
+            value="\n".join(stats_text),
+            inline=False
+        )
+
+        # Add total stats
+        total = sum(stats_dict.values())
+        embed.add_field(
+            name="📊 Base Stat Total",
+            value=str(total),
+            inline=True
+        )
+        
+        # Set thumbnail and footer
         embed.set_thumbnail(url=sprite)
+        embed.set_footer(text="Use !stats for detailed stats | !evolve for evolution chain")
         
         await ctx.send(embed=embed)
 
+# Evolution Command
 @commands.cooldown(1, 5, commands.BucketType.user)
 @bot.command(name="evolve", help="Get evolution chain for a Pokémon")
 async def evolve(ctx, pokemon: str):
@@ -266,6 +351,7 @@ async def evolve(ctx, pokemon: str):
         
         await ctx.send(embed=embed)
 
+# Moveset Command
 @commands.cooldown(1, 5, commands.BucketType.user)
 @bot.command(name="moveset", help="Get moveset for a Pokémon")
 async def moveset(ctx, pokemon: str):
@@ -308,6 +394,7 @@ async def moveset(ctx, pokemon: str):
         for embed in embeds:
             await ctx.send(embed=embed)
 
+# Show all the list of Commands 
 @bot.command(name="commands", help="Show all available commands")
 async def show_commands(ctx):
     """Shows all available bot commands"""
@@ -316,17 +403,6 @@ async def show_commands(ctx):
         description="Here are all available commands:",
         color=0x00ff00
     )
-    
-    commands_list = [
-        ("!pokedex <pokemon>", "Get detailed information about a Pokémon"),
-        ("!evolve <pokemon>", "Get the evolution chain for a Pokémon"),
-        ("!moveset <pokemon>", "Get the list of moves a Pokémon can learn"),
-        ("!stats <pokemon>", "Get detailed stats for a Pokémon"),
-        ("!compare <pokemon1> <pokemon2>", "Compare two Pokémon's stats"),
-        ("!weakness <pokemon>", "Get type effectiveness for a Pokémon"),
-        ("!strategy <pokemon>", "Get battle strategy suggestions"),
-        ("!commands", "Show this help message")
-    ]
     
     for cmd, desc in commands_list:
         embed.add_field(
@@ -338,7 +414,6 @@ async def show_commands(ctx):
     await ctx.send(embed=embed)
 
 # STATS FEATURE:
-
 @commands.cooldown(1, 5, commands.BucketType.user)
 @bot.command(name="stats", help="Get detailed stats for a Pokémon")
 async def stats(ctx, pokemon: str):
@@ -379,6 +454,7 @@ async def stats(ctx, pokemon: str):
         
         await ctx.send(embed=embed)
 
+# Compare 2 pokemons Command
 @commands.cooldown(1, 5, commands.BucketType.user)
 @bot.command(name="compare", help="Compare two Pokémon's stats")
 async def compare(ctx, pokemon1: str, pokemon2: str):
@@ -436,7 +512,7 @@ async def compare(ctx, pokemon1: str, pokemon2: str):
         
         await ctx.send(embed=embed)
 
-# Add this new command
+# Weakness Command
 @commands.cooldown(1, 5, commands.BucketType.user)
 @bot.command(name="weakness", help="Get type effectiveness for a Pokémon")
 async def weakness(ctx, pokemon: str):
@@ -495,18 +571,7 @@ async def weakness(ctx, pokemon: str):
         embed.set_thumbnail(url=sprite)
         await ctx.send(embed=embed)
 
-# Update the commands list in show_commands
-commands_list = [
-    ("!pokedex <pokemon>", "Get detailed information about a Pokémon"),
-    ("!evolve <pokemon>", "Get the evolution chain for a Pokémon"),
-    ("!moveset <pokemon>", "Get the list of moves a Pokémon can learn"),
-    ("!stats <pokemon>", "Get detailed stats for a Pokémon"),
-    ("!weakness <pokemon>", "Get type effectiveness for a Pokémon"),
-    ("!compare <pokemon1> <pokemon2>", "Compare two Pokémon's stats"),
-    ("!commands", "Show this help message")
-]
-
-
+# Strategy Commands
 @commands.cooldown(1, 5, commands.BucketType.user)
 @bot.command(name="strategy", help="Get battle strategy for a Pokémon")
 async def strategy(ctx, pokemon: str):
@@ -604,6 +669,241 @@ async def strategy(ctx, pokemon: str):
         embed.set_thumbnail(url=sprite)
         await ctx.send(embed=embed)
 
+# TypeChart
+@commands.cooldown(1, 10, commands.BucketType.user)
+@bot.command(name="typechart", help="Show the complete type effectiveness chart")
+async def typechart(ctx):
+    """Display the complete Pokémon type effectiveness chart"""
+    async with ctx.typing():
+        embed = discord.Embed(
+            title="Pokémon Type Chart",
+            description="A complete guide to type effectiveness",
+            color=0x00ff00
+        )
+        
+        for type_name, emoji in TYPE_EMOJIS.items():
+            type_info = []
+            type_color = TYPE_COLORS.get(type_name, 0xff0000)
+            
+            # Super effective against
+            super_effective = [t.capitalize() for t in TYPE_CHART[type_name]["weak"]]
+            if super_effective:
+                type_info.append(f"**Strong vs (2x)**: {', '.join(super_effective)}")
+            
+            # Resistant to
+            resistant = [t.capitalize() for t in TYPE_CHART[type_name]["resistant"]]
+            if resistant:
+                type_info.append(f"**Weak vs (½x)**: {', '.join(resistant)}")
+            
+            # Immune to
+            immune = [t.capitalize() for t in TYPE_CHART[type_name]["immune"]]
+            if immune:
+                type_info.append(f"**No effect (0x)**: {', '.join(immune)}")
+            
+            # Add field for this type
+            embed.add_field(
+                name=f"{emoji} {type_name.capitalize()}",
+                value="\n".join(type_info) or "No special effectiveness",
+                inline=False
+            )
+        
+        embed.set_footer(text="Use !weakness <pokemon> to see specific Pokémon type matchups")
+        await ctx.send(embed=embed)
+
+# Team suggestion 
+@commands.cooldown(1, 5, commands.BucketType.user)
+@bot.command(name="team", help="Get analysis for a Pokémon team")
+async def team(ctx, *pokemons):
+    """Analyze a team of up to 6 Pokémon"""
+    if not pokemons:
+        await ctx.send("Please specify at least one Pokémon! Example: `!team charizard blastoise venusaur`")
+        return
+    
+    if len(pokemons) > 6:
+        await ctx.send("A team can only have up to 6 Pokémon!")
+        return
+
+    async with ctx.typing():
+        # Collect data for all Pokémon
+        team_data = []
+        for pokemon in pokemons:
+            data = await get_pokemon_stats(pokemon)
+            if data is None:
+                await ctx.send(f"Sorry, couldn't find information for '{pokemon}'")
+                return
+            team_data.append(data)
+
+        # Create team analysis embed
+        embed = discord.Embed(
+            title="Team Analysis",
+            description=f"Analysis for team of {len(pokemons)} Pokémon",
+            color=0x00ff00
+        )
+
+        # Analyze team composition
+        types_coverage = set()
+        team_weaknesses = set()
+        team_resistances = set()
+        team_immunities = set()
+        role_distribution = {
+            "Tank/Wall": 0,
+            "Physical Attacker": 0,
+            "Special Attacker": 0,
+            "Physical Wall": 0,
+            "Special Wall": 0,
+            "Fast Sweeper": 0,
+            "Balanced": 0
+        }
+
+        # Analyze each team member
+        team_members = []
+        for name, types_str, stats_dict, sprite in team_data:
+            # Add types to coverage
+            types = [t.strip().lower() for t in types_str.split(",")]
+            types_coverage.update(types)
+
+            # Calculate role based on highest stat
+            highest_stat = max(stats_dict.items(), key=lambda x: x[1])
+            role = {
+                "hp": "Tank/Wall",
+                "attack": "Physical Attacker",
+                "defense": "Physical Wall",
+                "special-attack": "Special Attacker",
+                "special-defense": "Special Wall",
+                "speed": "Fast Sweeper"
+            }.get(highest_stat[0], "Balanced")
+            role_distribution[role] += 1
+
+            # Calculate type effectiveness
+            for poke_type in types:
+                chart = TYPE_CHART[poke_type]
+                team_weaknesses.update(chart["weak"])
+                team_resistances.update(chart["resistant"])
+                team_immunities.update(chart["immune"])
+
+            # Add to team members list
+            team_members.append(f"**{name}** ({types_str}) - {role}")
+
+        # Remove conflicts in type effectiveness
+        team_weaknesses = team_weaknesses - team_resistances - team_immunities
+        team_resistances = team_resistances - team_immunities
+
+        # Add team composition field
+        embed.add_field(
+            name="Team Members",
+            value="\n".join(team_members),
+            inline=False
+        )
+
+        # Add type coverage field
+        embed.add_field(
+            name="Type Coverage",
+            value=", ".join(t.capitalize() for t in sorted(types_coverage)) or "None",
+            inline=False
+        )
+
+        # Add team weaknesses field
+        if team_weaknesses:
+            embed.add_field(
+                name="⚠️ Team Weaknesses",
+                value=", ".join(t.capitalize() for t in sorted(team_weaknesses)),
+                inline=False
+            )
+
+        # Add role distribution field
+        roles = [f"{role}: {count}" for role, count in role_distribution.items() if count > 0]
+        embed.add_field(
+            name="Role Distribution",
+            value="\n".join(roles),
+            inline=False
+        )
+
+        # Add team tips
+        tips = []
+        if len(types_coverage) < 3:
+            tips.append("• Consider adding more type variety to your team")
+        if len(team_weaknesses) > 3:
+            tips.append("• Your team has several common weaknesses, consider adding Pokémon to cover these")
+        if role_distribution["Tank/Wall"] + role_distribution["Physical Wall"] + role_distribution["Special Wall"] == 0:
+            tips.append("• Your team lacks defensive Pokémon")
+        if role_distribution["Physical Attacker"] + role_distribution["Special Attacker"] == 0:
+            tips.append("• Your team lacks offensive Pokémon")
+        if role_distribution["Fast Sweeper"] == 0:
+            tips.append("• Consider adding a fast Pokémon to your team")
+
+        if tips:
+            embed.add_field(
+                name="💡 Team Building Tips",
+                value="\n".join(tips),
+                inline=False
+            )
+
+        await ctx.send(embed=embed)
+
+# Shiny Pokemon Command
+@commands.cooldown(1, 5, commands.BucketType.user)
+@bot.command(name="shiny", help="Show shiny version of a Pokémon")
+async def shiny(ctx, pokemon: str):
+    """Display the shiny version of a Pokémon"""
+    async with ctx.typing():
+        pokemon_data = await PokemonAPI.get_pokemon_data(pokemon)
+        if pokemon_data is None:
+            await ctx.send(f"Sorry, couldn't find information for '{pokemon}'")
+            return
+        
+        name = pokemon_data["name"].capitalize()
+        shiny_sprite = pokemon_data["sprites"]["front_shiny"]
+        
+        if shiny_sprite is None:
+            await ctx.send(f"Sorry, no shiny sprite available for {name}")
+            return
+        
+        embed = discord.Embed(
+            title=f"✨ Shiny {name}",
+            description="Here's how this Pokémon looks in its shiny form!",
+            color=0xFFD700  # Gold color for shiny
+        )
+
+        embed.add_field(
+            name="Shiny Form",
+            value="⬇️",
+            inline=True
+        )
+        
+        # Set normal sprite as thumbnail and shiny as main image
+        embed.set_thumbnail(url=pokemon_data["sprites"]["front_default"])
+        embed.set_image(url=shiny_sprite)
+        
+        await ctx.send(embed=embed)
+
+@shiny.error
+async def shiny_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("Please specify a Pokémon! Example: `!shiny charizard`")
+    elif isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"This command is on cooldown. Try again in {error.retry_after:.1f}s")
+    else:
+        logger.error(f"Error in shiny command: {error}")
+        await ctx.send(f"An error occurred: {str(error)}")
+
+@team.error
+async def team_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("Please specify at least one Pokémon! Example: `!team charizard blastoise venusaur`")
+    elif isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"This command is on cooldown. Try again in {error.retry_after:.1f}s")
+    else:
+        logger.error(f"Error in team command: {error}")
+        await ctx.send(f"An error occurred: {str(error)}")
+
+@typechart.error
+async def typechart_error(ctx, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"This command is on cooldown. Try again in {error.retry_after:.1f}s")
+    else:
+        logger.error(f"Error in typechart command: {error}")
+        await ctx.send(f"An error occurred: {str(error)}")
+
 @compare.error
 async def compare_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
@@ -643,6 +943,9 @@ commands_list = [
     ("!weakness <pokemon>", "Get type effectiveness for a Pokémon"),
     ("!strategy <pokemon>", "Get battle strategy suggestions"),
     ("!compare <pokemon1> <pokemon2>", "Compare two Pokémon's stats"),
+    ("!typechart", "Show the complete type effectiveness chart"),
+    ("!team <pokemon1> <pokemon2> ...", "Get analysis for a Pokémon team"),
+    ("!shiny <pokemon>", "Show shiny version of a Pokémon"),
     ("!commands", "Show this help message")
 ]
 
