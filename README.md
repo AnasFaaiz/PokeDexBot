@@ -41,6 +41,11 @@ Invitation Link Soon to be published!
 
 Want to contribute? Feel free to fork the repo and submit a pull request!
 
+
+## 📜 License
+
+This project is licensed under the MIT License – see the LICENSE file for details.
+
 ---
 
 💬 **Join the Community!** Have suggestions or need help? Join our **Discord Server**: [https://discord.gg/5ZfSbxrNeK]
